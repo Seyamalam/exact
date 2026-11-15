@@ -701,3 +701,57 @@ fn every_action_ending_survives_a_single_turn_until_the_host_drains_it() {
         assert_eq!(ended[id]["outcome"], "completed");
     }
 }
+
+/// A resource whose source is a module's, asked before the extension was
+/// bound — the substitute refused it in place, so no request went out and
+/// no topic was registered to watch — is asked again when binding
+/// announces the module (the Android reader binds after `data_ready`,
+/// where the camera fixture's `enumerateDevices` had already failed).
+#[test]
+fn binding_asks_again_a_source_a_resource_failed_against_the_substitute() {
+    let mut b = PlanBuilder::new(exact_kernel::SCHEMA_DIGEST, 1);
+    let string = b.primitive(TypeKind::String);
+    let source = b.source("devices", &[], string);
+    b.module(
+        source,
+        ("camera", "@fixture/camera"),
+        "devices",
+        false,
+        false,
+        "never",
+        "",
+        "{}",
+    );
+    b.resource("devices", "devices", &[], string, None);
+    b.node(NodeType::View as u8, None, None, 0, &[], &[], None);
+    let mut r = boot(b.finish().unwrap());
+    let _ = r.data_ready();
+    assert!(
+        r.take_requests().is_empty(),
+        "the substitute answered in place"
+    );
+    // A read made from data code (`native.call`) watches the key as the
+    // Contract read did: without it a refused call leaves no topic, and
+    // binding's announcement asks nothing again.
+    r.store().take_topics();
+    let body = serde_json::json!({"extension": "camera", "source": "devices", "args": {}})
+        .to_string()
+        .into_bytes();
+    assert!(r.module_call(&body).is_some());
+    assert_eq!(
+        r.store().take_topics(),
+        ["camera.devices"],
+        "a data-code read watches the module's key"
+    );
+    r.bind_extensions(&["camera"], &[]);
+    let (_, error) = r.apply_announced();
+    assert!(error.is_none(), "{error:?}");
+    let asks = r.take_requests();
+    assert!(
+        asks.iter().any(|q| {
+            serde_json::from_slice::<serde_json::Value>(&q.request.body)
+                .is_ok_and(|v| v["extension"] == "camera" && v["source"] == "devices")
+        }),
+        "binding asks the failed reader again: {asks:?}"
+    );
+}

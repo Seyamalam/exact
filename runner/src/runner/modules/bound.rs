@@ -569,6 +569,13 @@ impl<D: DataSource> Runner<D> {
     }
 }
 
+/// A forwarded body with the send's number `n`.
+pub(super) fn numbered(body: &[u8], n: u64) -> Vec<u8> {
+    let mut v: Json = serde_json::from_slice(body).unwrap_or_default();
+    v["request"] = json!(n);
+    v.to_string().into_bytes()
+}
+
 /// `value` without its `null` fields, at every depth, records inside lists
 /// included: what the call wrote. A list's own `null` elements stay, since
 /// their places are meaningful.

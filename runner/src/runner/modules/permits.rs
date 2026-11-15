@@ -566,6 +566,18 @@ fn least(a: String, b: String) -> String {
     }
 }
 
+/// The choices a `check` ticket's tap takes besides `cancel`: `allow`, and
+/// each failure it declares.
+pub(super) fn check_choices(sub: &Json) -> Vec<&'static str> {
+    let mut out = vec!["allow"];
+    for choice in ["fail", "lockout"] {
+        if !sub["check"]["choices"][choice].is_null() {
+            out.push(choice);
+        }
+    }
+    out
+}
+
 /// A typed sheet answer: a JSON array, or a comma list (`c2,c5`).
 fn typed_list(text: &str) -> Json {
     let listed: Vec<Json> = (text.split(','))

@@ -920,7 +920,7 @@ impl<D: DataSource> Runner<D> {
         }
         let sub = self.substitute(row);
         let declared = self.plan.str(row.declared).to_owned();
-        let checks = check_choices(&sub);
+        let checks = permits::check_choices(&sub);
         let taps = self.ceremony_choices(row, &sub);
         let taps: Vec<&str> = taps.iter().map(String::as_str).collect();
         // A permission's further answers (`choices`), after allow and deny.
@@ -1132,6 +1132,12 @@ impl<D: DataSource> Runner<D> {
         let mut args = v.get("args").cloned().unwrap_or(json!({}));
         self.clamp_bounds(&row, &mut args);
         self.resolve_of(&row, &mut args);
+        if !send {
+            // A source read watches its key, as a Contract read's does
+            // (`module_answer`): the runner answers it in place when the
+            // extension is unbound, and binding asks the reader again.
+            self.store.observe_topic(&key);
+        }
         let origin = self.data_origin();
         let causes = self.data_causes();
         // A send that answers nothing (LLP 1133.004 D5) settles once done,
@@ -1158,7 +1164,7 @@ impl<D: DataSource> Runner<D> {
                 // Contract send keeps the number it went out with (`bound.rs`).
                 let mut body = self.as_origin(origin, |r| r.forward_body(&row, args, None));
                 if let Some(n) = v["request"].as_u64() {
-                    body = numbered(&body, n);
+                    body = bound::numbered(&body, n);
                     let ticket = self
                         .extensions
                         .sent
@@ -1477,23 +1483,4 @@ fn error_code(json: &Json) -> Option<&str> {
     let only =
         (object.keys()).all(|k| matches!(k.as_str(), "error" | "message" | "apple" | "android"));
     only.then(|| object.get("error")?.as_str())?
-}
-
-/// A forwarded body with the send's number `n`.
-fn numbered(body: &[u8], n: u64) -> Vec<u8> {
-    let mut v: Json = serde_json::from_slice(body).unwrap_or_default();
-    v["request"] = json!(n);
-    v.to_string().into_bytes()
-}
-
-/// The choices a `check` ticket's tap takes besides `cancel`: `allow`, and
-/// each failure it declares.
-fn check_choices(sub: &Json) -> Vec<&'static str> {
-    let mut out = vec!["allow"];
-    for choice in ["fail", "lockout"] {
-        if !sub["check"]["choices"][choice].is_null() {
-            out.push(choice);
-        }
-    }
-    out
 }
