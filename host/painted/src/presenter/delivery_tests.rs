@@ -80,6 +80,38 @@ fn an_update_refuses_and_a_dev_generation_lets_requests_go_after_its_window() {
     assert_eq!(p.host.runner().slot("typed"), Some(&Value::str("ada")));
 }
 
+/// The Android reader paints only on turns (`Native.frame` inside `take`):
+/// after a module generation installs, the frame the swap dirtied has to
+/// come out, or the screen keeps the last stream's pixels (#585).
+#[test]
+fn a_carried_generation_leaves_a_frame_to_send() {
+    let plan = crate::test_plan(APP);
+    let (mut p, error) = Presenter::boot_with(
+        &plan,
+        Held,
+        (200., 200.),
+        1.,
+        PathBuf::new(),
+        PainterChoice::Cpu,
+    )
+    .unwrap();
+    assert!(error.is_none(), "{error:?}");
+    p.painted = true;
+    p.set_development(Some("http://127.0.0.1:9/".into()), None);
+    p.pending_dev = Some(crate::fetch::Generation {
+        identity: "gen".into(),
+        plan: plan.clone(),
+        module: module(),
+    });
+    p.poll_development(|| Held);
+    assert!(p.pending_dev.is_some(), "held while `wait(1)` is out");
+    let since = p.dev.as_ref().unwrap().held_since.expect("the wait began");
+    p.dev.as_mut().unwrap().held_since = Some(since - crate::host::LET_GO_AFTER);
+    p.poll_development(|| Held);
+    assert!(p.pending_dev.is_none(), "installed");
+    assert!(p.display_frame().is_some(), "the swap's paint is owed");
+}
+
 /// LLP 1122 D4 on the Android reader: a host that turns only when woken is
 /// told when the development poll wants its next turn, and is woken through
 /// the executor's fd when the poll's answer lands.
