@@ -109,7 +109,49 @@ fn a_carried_generation_leaves_a_frame_to_send() {
     p.dev.as_mut().unwrap().held_since = Some(since - crate::host::LET_GO_AFTER);
     p.poll_development(|| Held);
     assert!(p.pending_dev.is_none(), "installed");
+    // `frame_held` paints only while dirty or owed; the stream the reader
+    // takes comes only from a turn that reaches `display_frame`.
+    assert!(p.dirty(), "the swap must dirty the presenter for a stream");
     assert!(p.display_frame().is_some(), "the swap's paint is owed");
+}
+
+/// #585's next question after `a_carried_generation_leaves_a_frame_to_send`:
+/// is the owed frame's paint new, or does the validation boot's shared text
+/// state leave a frame that draws nothing new? A swap to another plan must
+/// change the pixels the reader is asked to draw.
+#[test]
+fn a_carried_generation_paints_the_new_plan() {
+    let old = crate::test_plan("component App\n  resource w = wait(1) as shape number\n  view\n    column width=200 height=200\n      text \"old\"\n");
+    let new = crate::test_plan("component App\n  resource w = wait(1) as shape number\n  view\n    column width=200 height=200\n      text \"new\"\n");
+    let (mut p, error) = Presenter::boot_with(
+        &old,
+        Held,
+        (200., 200.),
+        1.,
+        PathBuf::new(),
+        PainterChoice::Cpu,
+    )
+    .unwrap();
+    assert!(error.is_none(), "{error:?}");
+    p.painted = true;
+    p.set_development(Some("http://127.0.0.1:9/".into()), None);
+    let boot = p.display_frame().expect("the boot paints");
+    let before = boot.pixels.data().to_vec();
+    assert!(p.display_complete(&boot));
+    p.pending_dev = Some(crate::fetch::Generation {
+        identity: "gen".into(),
+        plan: new,
+        module: module(),
+    });
+    p.poll_development(|| Held);
+    assert!(p.pending_dev.is_some(), "held while `wait` is out");
+    let since = p.dev.as_ref().unwrap().held_since.expect("the wait began");
+    p.dev.as_mut().unwrap().held_since = Some(since - crate::host::LET_GO_AFTER);
+    p.poll_development(|| Held);
+    assert!(p.pending_dev.is_none(), "installed");
+    assert!(p.dirty(), "the swap must dirty the presenter for a stream");
+    let after = p.display_frame().expect("the swap's paint is owed").pixels.data().to_vec();
+    assert_ne!(before, after, "the new plan's text must reach the pixels");
 }
 
 /// LLP 1122 D4 on the Android reader: a host that turns only when woken is
