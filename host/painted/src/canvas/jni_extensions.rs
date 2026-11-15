@@ -102,19 +102,19 @@ pub fn surface_has(name: &str) -> bool {
 macro_rules! canvas_jni_extensions {
     () => {
         /// A topic an extension announced: its readers are asked again.
+        /// Any thread (`inbox`).
         #[no_mangle]
         pub unsafe extern "system" fn Java_dev_exact_canvas_Native_changed(
             env: *mut JNIEnv,
             _class: jclass,
             topic: jstring,
         ) {
-            let topic = string(env, topic);
-            with(|h| h.extension_changed(&topic));
+            $crate::inbox::push($crate::inbox::In::Changed(string(env, topic)));
         }
 
         /// A person's act on an extension's own platform UI (a
         /// notification's tap or action, `Activations.kt`): its event raised
-        /// with a person's origin (LLP 1133.004 D6).
+        /// with a person's origin (LLP 1133.004 D6). Any thread (`inbox`).
         #[no_mangle]
         pub unsafe extern "system" fn Java_dev_exact_canvas_Native_activate(
             env: *mut JNIEnv,
@@ -124,22 +124,24 @@ macro_rules! canvas_jni_extensions {
             args: jstring,
             action: jstring,
         ) {
-            let extension = string(env, extension);
-            let event = string(env, event);
-            let args = string(env, args);
             let action = (!action.is_null()).then(|| string(env, action));
-            with(|h| h.extension_activated(&extension, &event, &args, action.as_deref()));
+            $crate::inbox::push($crate::inbox::In::Activated {
+                extension: string(env, extension),
+                event: string(env, event),
+                args: string(env, args),
+                action,
+            });
         }
 
-        /// A line for the session's journal (`Exact.journal`).
+        /// A line for the session's journal (`Exact.journal`). Any thread
+        /// (`inbox`).
         #[no_mangle]
         pub unsafe extern "system" fn Java_dev_exact_canvas_Native_journal(
             env: *mut JNIEnv,
             _class: jclass,
             line: jstring,
         ) {
-            let line = string(env, line);
-            with(|h| h.journal(line));
+            $crate::inbox::push($crate::inbox::In::Journal(string(env, line)));
         }
 
         /// The session's clock, ms (`ExtensionContext.now`).
@@ -195,6 +197,7 @@ macro_rules! canvas_jni_extensions {
 
         /// How a presence check the reader made ended (`Presence.kt`, LLP
         /// 1133.010 D13): on the store's completion path, never journaled.
+        /// Any thread (`inbox`).
         #[no_mangle]
         pub unsafe extern "system" fn Java_dev_exact_canvas_Native_presence(
             env: *mut JNIEnv,
@@ -202,11 +205,12 @@ macro_rules! canvas_jni_extensions {
             answer: jstring,
         ) {
             let answer = $crate::canvas::field::text(env, answer);
-            with(|h| h.presence_reply(&answer));
+            $crate::inbox::push($crate::inbox::In::Presence(answer));
         }
 
         /// What the activity asked for the orientation lock (`Orientation.kt`,
         /// LLP 1133.029 D6): JSON, a conflict, and a line to journal or null.
+        /// Any thread (`inbox`).
         #[no_mangle]
         pub unsafe extern "system" fn Java_dev_exact_canvas_Native_orientationApplied(
             env: *mut JNIEnv,
@@ -217,7 +221,11 @@ macro_rules! canvas_jni_extensions {
         ) {
             let applied = $crate::canvas::field::text(env, applied);
             let line = (!line.is_null()).then(|| $crate::canvas::field::text(env, line));
-            with(|h| h.orientation_applied(&applied, conflict == JNI_TRUE, line.as_deref()));
+            $crate::inbox::push($crate::inbox::In::Orientation {
+                applied,
+                conflict: conflict == JNI_TRUE,
+                line,
+            });
         }
 
         /// Activity visibility and process execution eligibility (LLP 1133.033 D2).
@@ -294,7 +302,8 @@ macro_rules! canvas_jni_extensions {
         }
 
         /// A package's picture for request `id` (`Exact.picture`, LLP
-        /// 1133.019 D11 item 1): `bitmap`, or `error` when it is null.
+        /// 1133.019 D11 item 1): `bitmap`, or `error` when it is null. The
+        /// pixels are decoded on this thread; the answer lands in a turn.
         #[no_mangle]
         pub unsafe extern "system" fn Java_dev_exact_canvas_Native_picture(
             env: *mut JNIEnv,
@@ -309,11 +318,15 @@ macro_rules! canvas_jni_extensions {
                 $crate::canvas::jni::jni_picture::pixels(env, bitmap)
                     .ok_or_else(|| "EncodingError".to_owned())
             };
-            with(|h| h.picture_answer(id as u32, answer));
+            $crate::inbox::push($crate::inbox::In::Picture {
+                id: id as u32,
+                answer,
+            });
         }
 
         /// Picture `source` changed (asked again) or was revoked
-        /// (`ExtensionContext.changedPicture`, `revokePicture`).
+        /// (`ExtensionContext.changedPicture`, `revokePicture`). Any thread
+        /// (`inbox`).
         #[no_mangle]
         pub unsafe extern "system" fn Java_dev_exact_canvas_Native_pictureChanged(
             env: *mut JNIEnv,
@@ -321,8 +334,10 @@ macro_rules! canvas_jni_extensions {
             source: jstring,
             revoked: jboolean,
         ) {
-            let source = string(env, source);
-            with(|h| h.picture_changed(&source, revoked == JNI_TRUE));
+            $crate::inbox::push($crate::inbox::In::PictureChanged {
+                source: string(env, source),
+                revoked: revoked == JNI_TRUE,
+            });
         }
 
         /// The extensions the APK carries, one a line, bound at the host's next turn.

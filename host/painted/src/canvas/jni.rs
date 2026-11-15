@@ -261,7 +261,7 @@ macro_rules! canvas_jni {
             }
 
             /// The reader's answer to request `id`, or null for its
-            /// cancellation.
+            /// cancellation. Any thread (`inbox`).
             #[no_mangle]
             pub unsafe extern "system" fn Java_dev_exact_canvas_Native_answer(
                 env: *mut JNIEnv,
@@ -270,7 +270,10 @@ macro_rules! canvas_jni {
                 answer: jstring,
             ) {
                 let answer = (!answer.is_null()).then(|| string(env, answer));
-                with(|h| h.answer(id as u32, answer.as_deref()));
+                $crate::inbox::push($crate::inbox::In::Answer {
+                    id: id as u32,
+                    answer,
+                });
             }
 
             /// What the reader draws around the page, when that is not what

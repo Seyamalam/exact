@@ -42,6 +42,11 @@ impl<D: DataSource> Presenter<D> {
         let region_error = region_error.or(self.dispatch_authored_scroll());
         // An abort a source heard off this thread (a worker's let-go).
         self.host.runner_mut().collect_aborts();
+        // What the reader's threads told exact2 off this thread (`inbox`):
+        // applied in this turn, which a wait's loop runs too.
+        if crate::inbox::drain(self) {
+            self.repaint();
+        }
         let mut pump = Pump::new(clock);
         let executor = &self.executor;
         let turn = &mut self.refusal_turn;

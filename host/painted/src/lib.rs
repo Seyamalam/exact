@@ -115,6 +115,10 @@ pub use hatches::Hatches;
 pub use host::{Host, HostError};
 pub use presenter::Presenter;
 
+/// What the reader's threads tell exact2 while its own is held
+/// (`inbox`, LLP 1115.001 D5): pushed from any thread, applied by a turn.
+pub mod inbox;
+
 /// Whether a driver drives Android's reader (`canvas/agent.rs`).
 pub(crate) fn reader_driven() -> bool {
     #[cfg(target_os = "android")]

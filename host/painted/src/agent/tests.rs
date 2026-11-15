@@ -7,6 +7,8 @@ use exact_runner::{DataError, Value};
 mod input;
 // An orderly exit's wait for the work the app must finish.
 mod exit;
+// What the reader's threads hand exact2 off its own (`crate::inbox`).
+mod inbox;
 // A re-ask after a turn over its budget, which `clock settle` waits for.
 mod overrun;
 mod polls;

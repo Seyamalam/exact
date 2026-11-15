@@ -708,10 +708,11 @@ internal object Exact {
      * what a surface's first frame is timed from (`x_log_surfaces=1`). */
     var touched = 0L
 
-    /** The answer to a request exact2 made ([Native.answer]), or its cancellation (null): on exact2's thread. */
+    /** The answer to a request exact2 made ([Native.answer]), or its cancellation (null): kept for exact2's
+     * next turn, which a wait holding its thread takes too — a posted task could only run after it. */
     fun answer(id: Int, answer: String?) {
-        val o = owner
-        if (o != null) o.call { Native.answer(id, answer) } else Native.answer(id, answer)
+        Native.answer(id, answer)
+        owner?.call {}
     }
 
     /** A package calls an app handler on the host's thread and publishes what it changed. */
@@ -719,19 +720,21 @@ internal object Exact {
         try { Native.invoke(body) } catch (e: UnsatisfiedLinkError) { -1 }
     } ?: Native.invoke(body).also { turned() }
 
-    /** What the extensions tell exact2 ([Native.changed], [Native.bindExtensions]): on exact2's thread, in order. */
-    fun changed(topic: String) { val o = owner; if (o != null) o.call { Native.changed(topic) } else Native.changed(topic) }
+    /** What the extensions tell exact2 ([Native.changed], [Native.bindExtensions]): kept for its next turn, in
+     * the order each thread pushed it. */
+    fun changed(topic: String) { Native.changed(topic); owner?.call {} }
     /** A person's act on what an extension posted ([Activations]): its event raised with a person's origin, as an
-     * input, on exact2's thread; [action] is the declared action's record a notification's action carries. */
+     * input; [action] is the declared action's record a notification's action carries. */
     fun activate(extension: String, event: String, args: String, action: String?) {
-        val o = owner
-        if (o != null) { o.input(); o.call { Native.activate(extension, event, args, action) } } else Native.activate(extension, event, args, action)
+        owner?.input()
+        Native.activate(extension, event, args, action)
+        owner?.call {}
     }
-    /** A line for the session's journal, on exact2's thread. */
-    fun journal(line: String) { val o = owner; if (o != null) o.call { Native.journal(line) } else Native.journal(line) }
+    /** A line for the session's journal. */
+    fun journal(line: String) { Native.journal(line); owner?.call {} }
     /** A turn on exact2's thread, which asks for a display frame while a canvas input's samples wait. */
     fun wake() { owner?.call {} }
-    fun presence(answer: String) { val o = owner; if (o != null) o.call { Native.presence(answer) } else Native.presence(answer) }
+    fun presence(answer: String) { Native.presence(answer); owner?.call {} }
     private var pageHidden = false
     /** Execution sources: a started Activity, or a successfully promoted microphone, call or screen-capture
      * foreground service with a live claim. Agent claims grant no device execution. */
@@ -753,18 +756,19 @@ internal object Exact {
         if (o != null) o.drainStore(ms) else Native.storeDrain(ms.toInt())
     } catch (e: UnsatisfiedLinkError) { true }
     fun orientationApplied(applied: String, conflict: Boolean, line: String?) {
-        val o = owner
-        if (o != null) o.call { Native.orientationApplied(applied, conflict, line) } else Native.orientationApplied(applied, conflict, line)
+        Native.orientationApplied(applied, conflict, line)
+        owner?.call {}
     }
-    fun bindExtensions(names: String) { val o = owner; if (o != null) o.call { Native.bindExtensions(names) } else Native.bindExtensions(names) }
-    /** A package's picture for request [id] ([Native.picture]), or why there is none: on exact2's thread. */
+    fun bindExtensions(names: String) { Native.bindExtensions(names); owner?.call {} }
+    /** A package's picture for request [id] ([Native.picture]), or why there is none: kept for exact2's next
+     * turn (its pixels are decoded on this thread). */
     fun picture(id: Int, bitmap: android.graphics.Bitmap?, error: String?) {
-        val o = owner
-        if (o != null) o.call { Native.picture(id, bitmap, error) } else Native.picture(id, bitmap, error)
+        Native.picture(id, bitmap, error)
+        owner?.call {}
     }
     fun pictureChanged(source: String, revoked: Boolean) {
-        val o = owner
-        if (o != null) o.call { Native.pictureChanged(source, revoked) } else Native.pictureChanged(source, revoked)
+        Native.pictureChanged(source, revoked)
+        owner?.call {}
     }
 
     /** Give a GPU canvas its window: on the exact thread, without waiting for it; [done] there with the handle. */

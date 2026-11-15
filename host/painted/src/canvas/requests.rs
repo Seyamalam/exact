@@ -6,7 +6,6 @@
 
 use super::CanvasHost;
 use exact_runner::DataSource;
-use serde_json::Value as Json;
 
 impl<D: DataSource + Default> CanvasHost<D> {
     /// What the presenter asks of the reader since it last took them, as
@@ -19,6 +18,9 @@ impl<D: DataSource + Default> CanvasHost<D> {
     /// The reader calls this after every turn of the host, which is where
     /// the journal is written out when asked for (`canvas/journal.rs`).
     pub fn requests(&mut self) -> Option<Vec<i32>> {
+        // What the reader's threads pushed (`inbox`), before the asks made
+        // for it go out.
+        self.force |= crate::inbox::drain(&mut self.p);
         self.echo_journal();
         if self.p.host.sound.ready() {
             let files = self
@@ -84,31 +86,6 @@ impl<D: DataSource + Default> CanvasHost<D> {
             .reader_module_event(id, key, session, kind, payload, now);
     }
 
-    /// The reader's answer to request `id`, or its cancellation (`None`).
-    pub fn answer(&mut self, id: u32, answer: Option<&str>) {
-        self.p.answer_request(id, answer);
-    }
-
-    /// How a presence check the reader made ended (LLP 1133.010 D13).
-    pub fn presence_reply(&mut self, answer: &str) {
-        self.p
-            .host_mut()
-            .runner_mut()
-            .presence_reply(answer.as_bytes());
-        self.force = true;
-    }
-
-    /// What the activity asked for the session's orientation lock
-    /// (`Orientation.kt`, LLP 1133.029 D6), and a line its resolution
-    /// journals: a conflict, or a type this device does not show.
-    pub fn orientation_applied(&mut self, applied: &str, conflict: bool, line: Option<&str>) {
-        if let Some(line) = line {
-            self.p.host_mut().runner_mut().log(line);
-        }
-        self.p.orientation_applied(applied.to_owned(), conflict);
-        self.force = true;
-    }
-
     /// Android's visibility and execution eligibility, composed by `Exact.executionEligible`
     /// from Activity and promoted service ownership. Release gated streams before returning.
     pub fn page_hidden(&mut self, hidden: bool, eligible: bool) {
@@ -130,51 +107,6 @@ impl<D: DataSource + Default> CanvasHost<D> {
         id
     }
 
-    /// A topic the reader's extensions announced (`ExtensionContext.changed`,
-    /// LLP 1016.002): its readers are asked again.
-    pub fn extension_changed(&mut self, topic: &str) {
-        self.p.host().runner().native_slot().changed(topic);
-    }
-
-    /// A person's act on what an extension posted on the platform's own UI
-    /// (a notification's tap or action, `Native.activate`): its event,
-    /// raised with a person's origin as Apple's notification delegate raises
-    /// it (LLP 1133.004 D6, D7). `args` is a JSON array. An action's
-    /// `action`, the declared record its post carried, raises only while the
-    /// plan declares it, as Apple's categories are its current declarations.
-    pub fn extension_activated(
-        &mut self,
-        extension: &str,
-        event: &str,
-        args: &str,
-        action: Option<&str>,
-    ) {
-        let runner = self.p.host_mut().runner_mut();
-        if let Some(action) = action {
-            let record = serde_json::from_str(action).unwrap_or(Json::Null);
-            if !runner.declares_action(extension, &record) {
-                let name = record["action"].as_str().unwrap_or("");
-                runner.log(format!(
-                    "{extension}: the action \"{name}\" is not one this version of the app declares, and raised nothing"
-                ));
-                self.force = true;
-                return;
-            }
-        }
-        if let Err(e) =
-            runner.raise_module_event(extension, event, args, exact_runner::CallOrigin::App)
-        {
-            runner.log(e);
-        }
-        self.force = true;
-    }
-
-    /// A line the reader journals (`Native.journal`).
-    pub fn journal(&mut self, line: String) {
-        self.p.host_mut().runner_mut().log(line);
-        self.force = true;
-    }
-
     /// The extensions the APK carries (`exact.app.ExactExtensions`, LLP
     /// 1133.001 D5), one a line: they answer their names from now on,
     /// outside the agent; under it, those `EXACT_AGENT_BIND` names
@@ -192,18 +124,5 @@ impl<D: DataSource + Default> CanvasHost<D> {
         self.p.say_target("android");
         self.p.bind_modules(real, under);
         self.p.bind_pictures();
-    }
-
-    /// A package's picture for request `id` (`Native.picture`): its pixels,
-    /// or the implementation's error.
-    pub fn picture_answer(&mut self, id: u32, answer: Result<tiny_skia::Pixmap, String>) {
-        self.force |= self.p.picture_answered(id, answer);
-    }
-
-    /// An extension announced picture `source` changed or revoked it
-    /// (`ExtensionContext.changedPicture`, `revokePicture`).
-    pub fn picture_changed(&mut self, source: &str, revoked: bool) {
-        self.p.picture_changed(source, revoked);
-        self.force = true;
     }
 }
