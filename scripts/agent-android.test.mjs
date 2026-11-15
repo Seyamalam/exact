@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { pollUntil } from './agent-launch.mjs';
-import { androidJavaEnv, androidSdk, androidSdkPackages, androidScreenState, reverseRoot } from './agent-android.mjs';
+import { androidJavaEnv, androidSdk, androidSdkPackages, androidScreenState, androidPermissionPrompt, reverseRoot } from './agent-android.mjs';
 
 const screenFixtures = resolve(import.meta.dir, 'fixtures/android-screen');
 const screenDump = (state, kind) => readFileSync(resolve(screenFixtures, `${state}.${kind}.txt`), 'utf8');
@@ -156,6 +156,9 @@ if (cmd[0] === 'shell' && cmd[1] === 'dumpsys') {
     if (screen.delegateState) policy = policy.replace('KeyguardServiceDelegate\\n', 'KeyguardServiceDelegate state:\\n');
     process.stdout.write(policy);
   }
+}
+if (cmd[0] === 'shell' && cmd[1]?.startsWith('dumpsys window ') && screen.prompt) {
+  process.stdout.write('mCurrentFocus=Window{2ec3b1a u0 com.android.permissioncontroller/.permission.ui.GrantPermissionsActivity}\\n');
 }
 if (cmd[0] === 'shell' && cmd[1] === 'input' && cmd[3] === 'KEYCODE_WAKEUP') {
   screen.waking = true; writeFileSync(display, JSON.stringify(screen));
@@ -327,6 +330,39 @@ for (const [name, screen, dismissals] of [
     fixture.dispose();
   }
 }, 15000);
+
+test('a window dump names a grant-permissions prompt only while one is up', () => {
+  const prompt = 'com.android.permissioncontroller/.permission.ui.GrantPermissionsActivity';
+  expect(androidPermissionPrompt(`mCurrentFocus=Window{2ec3b1a u0 ${prompt}}\n`)).toBe(prompt);
+  expect(androidPermissionPrompt(`mFocusedApp=AppWindowToken{... ${prompt}}\n`)).toBe(prompt);
+  expect(androidPermissionPrompt(`mCurrentFocus=Window{a1b2c3 u0 dev.exact.app/dev.exact.app.MainActivity}\n`)).toBeNull();
+  expect(androidPermissionPrompt('')).toBeNull();
+});
+
+test('the Android reader says a permission prompt left up and stops the controller with the app', async () => {
+  const { androidDeploy } = await import('./agent-android.mjs');
+  const fixture = androidDriveFixture(true, null, false, null, false, { prompt: true });
+  let child;
+  try {
+    child = androidDeploy(fixture.app, fixture.bin, fixture.env).spawn();
+    const closed = once(child, 'close'); let error = '';
+    child.stderr.on('data', data => { error += data; });
+    child.stdout.once('data', () => child.stdin.end('{"op":"quit"}\n'));
+    expect(await closed).toEqual([0, null]);
+    expect(error).toContain('a permission prompt was up when the drive started');
+    expect(error).toContain('GrantPermissionsActivity');
+    const commands = fixture.commands().map(args => args.slice(2));
+    // Launch and cleanup each stop both controllers; the prompt's own force-stops bracket the drive.
+    for (const pkg of ['com.android.permissioncontroller', 'com.google.android.permissioncontroller'])
+      expect(commands.filter(args => args.join(' ') === `shell am force-stop ${pkg}`)).toHaveLength(2);
+    const launch = commands.findIndex(args => args[0] === 'shell' && args[1].startsWith('am start '));
+    const stop = args => args.join(' ') === 'shell am force-stop com.android.permissioncontroller';
+    expect(commands.slice(0, launch).some(stop)).toBe(true);
+  } finally {
+    if (child?.exitCode === null) { const closed = once(child, 'close'); child.kill(); await closed; }
+    fixture.dispose();
+  }
+});
 
 for (const wakefulness of ['Asleep', 'Awake']) test(`the Android reader refuses an ${wakefulness} secure lock screen before launching`, async () => {
   const { androidDeploy } = await import('./agent-android.mjs');

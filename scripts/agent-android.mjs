@@ -569,6 +569,12 @@ export function androidScreenState(power, window) {
 
 const screenDescription = ({ wakefulness, showing }) => `${wakefulness}, keyguard ${showing == null ? 'unknown' : showing ? 'showing' : 'hidden'}`;
 
+/** The permission controller's grant prompt's window title when `dumpsys window` still shows one — a drive
+ * that ended mid-permission left `GrantPermissionsActivity` up — or null. */
+export function androidPermissionPrompt(window) {
+  return /(\S*GrantPermissionsActivity)/.exec(window)?.[1] ?? null;
+}
+
 async function prepareAndroidScreen(tool, serial) {
   const run = (...args) => {
     const result = spawnSync(tool, ['-s', serial, 'shell', ...args], { encoding: 'utf8', timeout: 5000, maxBuffer: 4 << 20 });
@@ -614,6 +620,10 @@ async function relay([serial, id, vars, encodedLease]) {
     logs?.kill();
     if (port && sh('forward', '--remove', `tcp:${port}`).status !== 0) released = false;
     sh('shell', 'am', 'force-stop', id);
+    // A prompt a drive left up is the permission controller's, not the app's — stop it with the app so it
+    // cannot cover the next launch (the launch names it when the next drive finds one).
+    sh('shell', 'am', 'force-stop', 'com.android.permissioncontroller');
+    sh('shell', 'am', 'force-stop', 'com.google.android.permissioncontroller');
     if (!releaseReverse(tool, serial, lease)) released = false;
     return released;
   };
@@ -629,6 +639,14 @@ async function relay([serial, id, vars, encodedLease]) {
     const extras = Object.entries(launch).flatMap(([k, v]) => ['--es', `x_${k.slice('EXACT_'.length).toLowerCase()}`, quote(v)]);
     console.error(`Android screen before launch: ${await prepareAndroidScreen(tool, serial)}`);
     sh('shell', 'am', 'force-stop', id);
+    // A grant-permissions prompt is the permission controller's activity, not the app's: `am force-stop`
+    // left one up in the task, where it covered the next launch (`cmd activity stack remove` removed it by
+    // hand). `--activity-clear-task` clears the app's task; stopping the controller removes a prompt
+    // wherever it sits — and say when one was up, since it means a drive ended mid-permission.
+    const prompt = androidPermissionPrompt(sh('shell', 'dumpsys window | grep -E "mCurrentFocus|mFocusedApp|topResumedActivity|GrantPermissionsActivity"').stdout ?? '');
+    if (prompt) console.error(`a permission prompt was up when the drive started: ${prompt}`);
+    sh('shell', 'am', 'force-stop', 'com.android.permissioncontroller');
+    sh('shell', 'am', 'force-stop', 'com.google.android.permissioncontroller');
     sh('logcat', '-c');
     // `--activity-clear-task`: a force-stop ends the app's process but leaves its task, and an activity of another
     // app in it (the permission controller's dialog a last drive raised) would cover this launch. `lower=0`: the
